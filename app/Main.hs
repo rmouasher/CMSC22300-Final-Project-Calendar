@@ -166,6 +166,23 @@ data View
 addEvent :: Calendar -> Event -> Maybe Calendar
 addEvent (Calendar es) e = Just (Calendar (e : es))
 
+-- Delete Calendar Function
+
+deleteEvent :: EventId -> Calendar -> Maybe Calendar
+deleteEvent targetId (Calendar es)
+  | exists targetId es = Just (Calendar (remove targetId es))
+  | otherwise          = Nothing
+
+exists :: EventId -> [Event] -> Bool
+exists _ []     = False
+exists i (e:es) = eventId e == i || exists i es
+
+remove :: EventId -> [Event] -> [Event]
+remove _ [] = []
+remove i (e:es)
+  | eventId e == i = remove i es
+  | otherwise      = e : remove i es
+
 main :: IO ()
 main = do
   args <- getArgs
