@@ -1,12 +1,33 @@
 
+
+## add event "study" to mycal it will create if it does not exist
+  
   cabal run calendar-project -- \
-  --dir "./mycal2" \
+  --dir "./mycal" \
   --add "Event { eventId = EventId 1, title = Title \"Study\", date = Date {year=2026, month=2, day=24}, time = TimeInterval {start = TimeOfDay {hour=9, minute=0}, end = TimeOfDay {hour=10, minute=0}}, location = Just (Location \"Harper\"), reminders = [], recurrence = NoRecurrence, notes = Nothing }"
 
+## add event "not study" to mycal it will create if it does not exist
+
   cabal run calendar-project -- \
-  --dir "./mycal2" \
+  --dir "./mycal" \
   --add "Event { eventId = EventId 2, title = Title \"Not study\", date = Date {year=2026, month=2, day=24}, time = TimeInterval {start = TimeOfDay {hour=9, minute=0}, end = TimeOfDay {hour=10, minute=0}}, location = Just (Location \"Harper\"), reminders = [], recurrence = NoRecurrence, notes = Nothing }"
 
+
+## add event "Jump Scare" to mycal it will create if it does not exist
+
  cabal run calendar-project -- \
-  --dir "./mycal2" \
+  --dir "./mycal" \
   --add "Event { eventId = EventId 3, title = Title \"Jump Scare\", date = Date {year=2027, month=2, day=24}, time = TimeInterval {start = TimeOfDay {hour=9, minute=0}, end = TimeOfDay {hour=10, minute=0}}, location = Just (Location \"Harper\"), reminders = [], recurrence = NoRecurrence, notes = Nothing }"
+
+
+## print the calendar
+
+cabal run calendar-project -- --dir "./mycal" --print
+
+
+## delete  event with ID 1 from the calendar
+cabal run calendar-project -- --dir "./mycal" --delete 1
+
+## print the calendar should see event is gone now
+
+cabal run calendar-project -- --dir "./mycal" --print
