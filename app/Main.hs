@@ -30,11 +30,9 @@ usage = unlines
 
 
 --------------------------------------------------------------------------------
--- 1) Small wrapper types (newtypes)
+-- Small wrapper types (newtypes)
 --------------------------------------------------------------------------------
 
--- Wrapping Strings in newtypes prevents mixing up fields by accident
--- (e.g. passing a Location where a Title is expected).
 newtype Title    = Title String
   deriving (Eq, Ord, Show, Read)
 
@@ -49,11 +47,10 @@ newtype EventId  = EventId Int
   deriving (Eq, Ord, Show, Read)
 
 --------------------------------------------------------------------------------
--- 2) Date / time / intervals
+-- Date / time / intervals
 --------------------------------------------------------------------------------
 
--- A simple date type you can compare/sort.
--- Later you can replace this with Data.Time.Day if you want.
+-- A simple date type to compare/sort.
 data Date = Date
   { year  :: Int
   , month :: Int
@@ -61,7 +58,6 @@ data Date = Date
   } deriving (Eq, Ord, Show, Read)
 
 -- A time-of-day type (24-hour clock).
--- Again, you can later swap to Data.Time.LocalTime.TimeOfDay.
 data TimeOfDay = TimeOfDay
   { hour   :: Int
   , minute :: Int
@@ -76,7 +72,7 @@ data TimeInterval = TimeInterval
   } deriving (Eq, Ord, Show, Read)
 
 --------------------------------------------------------------------------------
--- 3) Reminders (notifications relative to event time)
+-- Reminders (notifications relative to event time)
 --------------------------------------------------------------------------------
 
 -- Represent “remind me N minutes/hours/days before the event”.
@@ -87,7 +83,7 @@ data Reminder
   deriving (Eq, Ord, Show, Read)
 
 --------------------------------------------------------------------------------
--- 4) Recurrence (repeating events)
+-- Recurrence (repeating events)
 --------------------------------------------------------------------------------
 
 data Weekday = Mon | Tue | Wed | Thu | Fri | Sat | Sun
@@ -108,10 +104,9 @@ data Recurrence
   deriving (Eq, Ord, Show, Read)
 
 --------------------------------------------------------------------------------
--- 5) The core Event type
+-- Event type
 --------------------------------------------------------------------------------
 
--- This is your “custom event type” milestone: title/date/time/location/reminders/etc.
 data Event = Event
   { eventId    :: EventId            -- unique identifier for insert/delete/edit
   , title      :: Title              -- event name
@@ -124,23 +119,22 @@ data Event = Event
   } deriving (Eq, Show, Read)
 
 --------------------------------------------------------------------------------
--- 6) Calendar type (persistent data structure)
+-- Calendar type (persistent data structure)
 --------------------------------------------------------------------------------
 
 -- The simplest persistent calendar is just a list of events.
 -- Insert/delete return a *new* list, keeping previous versions alive.
--- If you want faster lookups later, you can reorganize into (Date -> [Event]).
 newtype Calendar = Calendar
   { events :: [Event]
   } deriving (Eq, Show, Read)
 
 --------------------------------------------------------------------------------
--- 7) Conflicts: how to represent and report them
+-- Conflicts: how to represent and report them
 --------------------------------------------------------------------------------
 
 data ConflictReason
   = Overlap TimeInterval   -- two events overlap during this interval
-  | SameStartTime          -- optional extra categorization you might want
+  | SameStartTime
   deriving (Eq, Show)
 
 -- A conflict is a pair of events + the reason.
@@ -151,12 +145,12 @@ data Conflict = Conflict
   } deriving (Eq, Show)
 
 --------------------------------------------------------------------------------
--- 8) Views for terminal printing
+-- Views for terminal printing
 --------------------------------------------------------------------------------
 
 -- A rendering target: either a day view or a week view.
--- For WeekView Date, you can interpret the Date as “the week containing this date”
--- or “week starting at this date” (you’ll pick one rule in your implementation).
+-- For WeekView Date, can interpret the Date as “the week containing this date”
+-- or “week starting at this date” (will pick a rule soon)
 data View
   = DayView Date
   | WeekView Date
@@ -192,12 +186,15 @@ daysInMonth y m =
 toMinutes :: TimeOfDay -> Int
 toMinutes (TimeOfDay h m) = h * 60 + m
 --------------------------------------------------------------------------------
---PROGRAM LOGIC
+-- PROGRAM LOGIC
 --------------------------------------------------------------------------------
 -- Add to Calendar Function & Check for time conflict
 
 addEvent :: Calendar -> Event -> Maybe Calendar
-addEvent (Calendar es) e = Just (Calendar (e : es))
+addEvent cal@(Calendar es) e =
+  if null (conflictsFor cal e)
+     then Just (Calendar (e : es))
+     else Nothing
 
 -- Delete Calendar Function
 
@@ -275,6 +272,56 @@ validateEvent ev =
           Just badR -> Left ("Invalid reminder: " ++ show badR)
           Nothing   -> Right ev
 
+--------------------------------------------------------------------------------
+-- Conflict Handling
+--------------------------------------------------------------------------------
+-- Check for intv time overlap
+overlaps :: TimeInterval -> TimeInterval -> Bool
+overlaps (TimeInterval s1 e1) (TimeInterval s2 e2) =
+  toMinutes s1 < toMinutes e2 && toMinutes s2 < toMinutes e1
+
+-- If events overlap, compute the actual overlapping interval.
+overlapInterval :: TimeInterval -> TimeInterval -> Maybe TimeInterval
+overlapInterval i1@(TimeInterval s1 e1) i2@(TimeInterval s2 e2)
+  | overlaps i1 i2 =
+      let s = max s1 s2
+          e = min e1 e2
+      in Just (TimeInterval s e)
+  | otherwise = Nothing
+
+-- Handles conflicts between events
+conflictBetween :: Event -> Event -> Maybe Conflict
+conflictBetween a b
+  | date a /= date b = Nothing
+  | otherwise =
+      case overlapInterval (time a) (time b) of
+        Nothing -> Nothing
+        Just ov -> Just (Conflict a b (Overlap ov))
+
+-- Conflicts for adding one event into a calendar
+conflictsFor :: Calendar -> Event -> [Conflict]
+conflictsFor (Calendar es) newEv = go es
+  where
+    go [] = []
+    go (e:rest) =
+      case conflictBetween e newEv of
+        Nothing -> go rest
+        Just c  -> c : go rest
+
+-- All conflicts in a calendar
+allConflicts :: Calendar -> [Conflict]
+allConflicts (Calendar es) = go es
+  where
+    go [] = []
+    go (e:rest) = conflictsWith e rest ++ go rest
+
+    conflictsWith :: Event -> [Event] -> [Conflict]
+    conflictsWith _ [] = []
+    conflictsWith e (x:xs) =
+      case conflictBetween e x of
+        Nothing -> conflictsWith e xs
+        Just c  -> c : conflictsWith e xs
+
 
 --------------------------------------------------------------------------------
 -- rendering
@@ -331,7 +378,7 @@ loadCalendar dir = do
       s <- readFile fp
       case readMaybe s :: Maybe Calendar of
         Just cal -> pure cal
-        Nothing  -> pure (Calendar [])  -- or print an error if you prefer
+        Nothing  -> pure (Calendar [])
 
 -- Save calendar to dir/calendar.txt (creates dir if needed).
 saveCalendar :: FilePath -> Calendar -> IO ()
