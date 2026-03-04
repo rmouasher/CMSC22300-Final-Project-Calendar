@@ -161,7 +161,7 @@ data View
   | WeekView Date
   deriving (Eq, Show)
 
--- Add to Calendar Function
+-- Add to Calendar Function & Check for time conflict
 
 addEvent :: Calendar -> Event -> Maybe Calendar
 addEvent (Calendar es) e = Just (Calendar (e : es))
@@ -182,6 +182,18 @@ remove _ [] = []
 remove i (e:es)
   | eventId e == i = remove i es
   | otherwise      = e : remove i es
+
+-- Basic Invariants and Validation
+isValidDate :: Date -> Bool
+
+isValidTimeOfDay :: TimeOfDay -> Bool
+
+isValidInterval :: TimeInterval -> Bool
+
+validateEvent :: Event -> Either String Event
+
+--
+
 
 main :: IO ()
 main = do
