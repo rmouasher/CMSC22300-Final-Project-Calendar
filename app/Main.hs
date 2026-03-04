@@ -4,6 +4,10 @@ module Main where
 
 import System.Environment (getArgs)
 import Text.Read (readMaybe)
+import Data.List (sortOn)
+import Text.Printf (printf)
+import System.Directory (doesFileExist, createDirectoryIfMissing)
+import System.FilePath ((</>))
 
 -- Very small flag parser: expects --calendar <VALUE> --event <VALUE>
 getFlag :: String -> [String] -> Maybe String
@@ -17,14 +21,11 @@ usage :: String
 usage =
   unlines
     [ "Usage:"
-    , "  runghc Main.hs --calendar '<CALENDAR>' --event '<EVENT>'"
+    , "  runghc Main.hs [--dir <DIR>] --event '<EVENT>'"
     , ""
-    , "Example:"
-    , "  runghc Main.hs \\"
-    , "    --calendar \"Calendar {events = []}\" \\"
-    , "    --event \"Event { eventId = EventId 1, title = Title \\\"Study\\\", date = Date 2026 2 24,"
-    , "                  time = TimeInterval (TimeOfDay 9 0) (TimeOfDay 10 0), location = Nothing,"
-    , "                  reminders = [], recurrence = NoRecurrence, notes = Nothing }\""
+    , "Notes:"
+    , "  - If --dir is provided, the calendar is loaded/saved at <DIR>/calendar.txt"
+    , "  - If missing (or file doesn't exist), starts a new empty calendar"
     ]
 
 
@@ -184,28 +185,101 @@ remove i (e:es)
   | otherwise      = e : remove i es
 
 -- Basic Invariants and Validation
-isValidDate :: Date -> Bool
+--isValidDate :: Date -> Bool
 
-isValidTimeOfDay :: TimeOfDay -> Bool
+--isValidTimeOfDay :: TimeOfDay -> Bool
 
-isValidInterval :: TimeInterval -> Bool
+--isValidInterval :: TimeInterval -> Bool
 
-validateEvent :: Event -> Either String Event
-
+--validateEvent :: Event -> Either String Event
 --
 
+
+--------------------------------------------------------------------------------
+-- rendering
+--------------------------------------------------------------------------------
+
+-- Render the whole calendar: header + events line-by-line
+renderCalendar :: Calendar -> String
+renderCalendar (Calendar es) =
+  case sortEvents es of
+    [] -> "Calendar is empty.\n"
+    xs ->
+      unlines $
+        ("Calendar (" ++ show (length xs) ++ " events):")
+        : map renderEventLine xs
+
+-- Sort by (date, start time) so printing is chronological
+sortEvents :: [Event] -> [Event]
+sortEvents = sortOn (\e -> (date e, start (time e), eventId e))
+
+-- One-line pretty print for an event
+renderEventLine :: Event -> String
+renderEventLine e =
+  let Date y m d = date e
+      TimeInterval s t = time e
+      Title ttl = title e
+      locStr =
+        case location e of
+          Nothing -> ""
+          Just (Location loc) -> " @ " ++ loc
+      noteStr =
+        case notes e of
+          Nothing -> ""
+          Just (Notes note) -> " @ " ++ note
+  in printf "%04d-%02d-%02d %s-%s  %s%s%s"
+            y m d (renderTime s) (renderTime t) ttl locStr noteStr
+
+renderTime :: TimeOfDay -> String
+renderTime (TimeOfDay h mn) = printf "%02d:%02d" h mn
+
+
+-- Where we store the calendar inside the directory
+calendarFileName :: FilePath
+calendarFileName = "calendar.txt"
+
+-- Load calendar from dir/calendar.txt if it exists and parses;
+-- otherwise return an empty calendar.
+loadCalendar :: FilePath -> IO Calendar
+loadCalendar dir = do
+  let fp = dir </> calendarFileName
+  existsFile <- doesFileExist fp
+  if not existsFile
+    then pure (Calendar [])
+    else do
+      s <- readFile fp
+      case readMaybe s :: Maybe Calendar of
+        Just cal -> pure cal
+        Nothing  -> pure (Calendar [])  -- or print an error if you prefer
+
+-- Save calendar to dir/calendar.txt (creates dir if needed).
+saveCalendar :: FilePath -> Calendar -> IO ()
+saveCalendar dir cal = do
+  createDirectoryIfMissing True dir
+  let fp = dir </> calendarFileName
+  writeFile fp (show cal)
 
 main :: IO ()
 main = do
   args <- getArgs
-  case (getFlag "--calendar" args, getFlag "--event" args) of
-    (Just calStr, Just evStr) -> do
-      case (readMaybe calStr :: Maybe Calendar, readMaybe evStr :: Maybe Event) of
-        (Just cal, Just ev) ->
+
+  let mDir   = getFlag "--dir" args
+  let mEvStr = getFlag "--event" args
+
+  case mEvStr of
+    Nothing -> putStrLn usage
+    Just evStr ->
+      case readMaybe evStr :: Maybe Event of
+        Nothing -> putStrLn ("Could not parse --event.\n\n" ++ usage)
+        Just ev -> do
+          -- choose directory or default to current directory
+          let dir = maybe "." id mDir
+
+          cal <- loadCalendar dir
+
           case addEvent cal ev of
-            Nothing   -> putStrLn "Conflict: event NOT added."
+            Nothing -> putStrLn "Conflict: event NOT added."
             Just cal' -> do
-              putStrLn "Success: event added. New calendar:"
-              print cal'
-        _ -> putStrLn ("Could not parse --calendar or --event.\n\n" ++ usage)
-    _ -> putStrLn usage
+              saveCalendar dir cal'
+              putStrLn "Success: event added. Current calendar:"
+              putStrLn (renderCalendar cal')

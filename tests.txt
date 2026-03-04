@@ -1,0 +1,16 @@
+runghc Main.hs \
+  --calendar "Calendar {events = []}" \
+  --event "Event { eventId = EventId 1, title = Title \"Study\", date = Date {year=2026, month=2, day=24}, time = TimeInterval {start = TimeOfDay {hour=9, minute=0}, end = TimeOfDay {hour=10, minute=0}}, location = Just (Location \"Harper Library\"), reminders = [], recurrence = NoRecurrence, notes = Just (Notes \"Freaky ahh\") }"
+
+  cabal run calendar-project -- \
+  --dir "./mycal" \
+  --event "Event { eventId = EventId 2, title = Title \"Meeting\", date = Date {year=2026, month=2, day=24}, time = TimeInterval {start = TimeOfDay {hour=13, minute=0}, end = TimeOfDay {hour=14, minute=0}}, location = Nothing, reminders = [], recurrence = NoRecurrence, notes = Nothing }"
+
+
+  cabal run calendar-project -- \
+  --dir "./mycal" \
+  --event "Event { eventId = EventId 3, title = Title \"Freaky AHH\", date = Date {year=2028, month=69, day=69}, time = TimeInterval {start = TimeOfDay {hour=13, minute=0}, end = TimeOfDay {hour=14, minute=0}}, location = Nothing, reminders = [], recurrence = NoRecurrence, notes = Nothing }"
+
+  cabal run calendar-project -- \
+  --dir "./mycal" \
+  --event "Event { eventId = EventId 3, title = Title \"Dick balls\", date = Date {year=2028, month=69, day=69}, time = TimeInterval {start = TimeOfDay {hour=13, minute=0}, end = TimeOfDay {hour=14, minute=0}}, location = Nothing, reminders = [], recurrence = NoRecurrence, notes = Nothing }"
