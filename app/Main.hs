@@ -18,15 +18,15 @@ getFlag flag (x:y:rest)
 getFlag _ [_] = Nothing
 
 usage :: String
-usage =
-  unlines
-    [ "Usage:"
-    , "  runghc Main.hs [--dir <DIR>] --event '<EVENT>'"
-    , ""
-    , "Notes:"
-    , "  - If --dir is provided, the calendar is loaded/saved at <DIR>/calendar.txt"
-    , "  - If missing (or file doesn't exist), starts a new empty calendar"
-    ]
+usage = unlines
+  [ "Usage:"
+  , "  cabal run calendar-project -- [--dir <DIR>] --add '<EVENT>'"
+  , "  cabal run calendar-project -- [--dir <DIR>] --delete <EVENT_ID>"
+  , ""
+  , "Notes:"
+  , "  - Calendar is stored at <DIR>/calendar.txt (default DIR is current directory '.')"
+  , "  - EVENT must be valid Haskell syntax for your Event type (Read instance)"
+  ]
 
 
 --------------------------------------------------------------------------------
@@ -340,27 +340,49 @@ saveCalendar dir cal = do
   let fp = dir </> calendarFileName
   writeFile fp (show cal)
 
+
+readEventId :: String -> Maybe EventId
+readEventId s = EventId <$> (readMaybe s :: Maybe Int)
+
 main :: IO ()
 main = do
   args <- getArgs
 
-  let mDir   = getFlag "--dir" args
-  let mEvStr = getFlag "--event" args
+  let dir = maybe "." id (getFlag "--dir" args)
+      mAddStr = getFlag "--add" args
+      mDelStr = getFlag "--delete" args
 
-  case mEvStr of
-    Nothing -> putStrLn usage
-    Just evStr ->
+  -- Load calendar (or empty)
+  cal <- loadCalendar dir
+
+  case (mAddStr, mDelStr) of
+    (Just _, Just _) ->
+      putStrLn "Error: choose only one of --add or --delete.\n" >> putStrLn usage
+
+    (Just evStr, Nothing) ->
       case readMaybe evStr :: Maybe Event of
-        Nothing -> putStrLn ("Could not parse --event.\n\n" ++ usage)
-        Just ev -> do
-          -- choose directory or default to current directory
-          let dir = maybe "." id mDir
+        Nothing -> putStrLn ("Could not parse --add EVENT.\n\n" ++ usage)
+        Just ev ->
+          case validateEvent ev of
+            Left err -> putStrLn err
+            Right validEv ->
+              case addEvent cal validEv of
+                Nothing -> putStrLn "Conflict: event NOT added."
+                Just cal' -> do
+                  saveCalendar dir cal'
+                  putStrLn "Added. Current calendar:"
+                  putStrLn (renderCalendar cal')
 
-          cal <- loadCalendar dir
-
-          case addEvent cal ev of
-            Nothing -> putStrLn "Conflict: event NOT added."
+    (Nothing, Just delStr) ->
+      case readEventId delStr of
+        Nothing -> putStrLn ("Could not parse --delete EVENT_ID (expected an Int).\n\n" ++ usage)
+        Just eid ->
+          case deleteEvent eid cal of
+            Nothing -> putStrLn "No such event ID; nothing deleted."
             Just cal' -> do
               saveCalendar dir cal'
-              putStrLn "Success: event added. Current calendar:"
+              putStrLn "Deleted. Current calendar:"
               putStrLn (renderCalendar cal')
+
+    (Nothing, Nothing) ->
+      putStrLn usage
