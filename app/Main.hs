@@ -191,7 +191,7 @@ daysInMonth y m =
 
 toMinutes :: TimeOfDay -> Int
 toMinutes (TimeOfDay h m) = h * 60 + m
---------------------------------------------------------------------------------  -- PROGRAM LOGIC
+--------------------------------------------------------------------------------
 --PROGRAM LOGIC
 --------------------------------------------------------------------------------
 -- Add to Calendar Function & Check for time conflict
