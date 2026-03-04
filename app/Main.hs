@@ -221,7 +221,7 @@ isValidDate :: Date -> Bool
 isValidDate (Date y m d)
   | m < 1 || m > 12   = False
   | d < 1             = False
-  | d > daysInMonth   = False
+  | d > daysInMonth y m  = False
   | otherwise = True
 
 isValidTimeOfDay :: TimeOfDay -> Bool
