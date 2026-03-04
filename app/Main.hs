@@ -218,6 +218,11 @@ remove i (e:es)
 
 -- Basic Invariants and Validation
 isValidDate :: Date -> Bool
+isValidDate (Date y m d)
+  | m < 1 || m > 12   = False
+  | d < 1             = False
+  | d > daysInMonth   = False
+  | otherwise = True
 
 isValidTimeOfDay :: TimeOfDay -> Bool
 isValidTimeOfDay (TimeOfDay h m)
