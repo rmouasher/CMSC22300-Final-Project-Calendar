@@ -1,0 +1,36 @@
+What’s been done:
+We have implemented a basic UI where you can interact with calendars from the command line following a very specific format. 
+The UI takes in flags such as add and delete where it can add events to a calendar or delete them. It also has print functionality so
+that you can view the calendar that you want. 
+
+See tests.txt for some quick tests
+
+To run these tests, the commands you’d need are the following:
+cabal run calendar-project -- --add '<EVENT>'
+
+
+cabal run calendar-project -- --delete 3
+
+We implemented some basic conflict detecting logic where two events can conflict if they occur on the same date and their time intervals 
+overlap (using half-open intervals so an event ending exactly when another begins is allowed). It will refrain from adding to the calendar 
+if events do conflict. 
+
+We also implemented invariants/validation functions that check if inputted dates, times, intervals make sense, that  reminders are 
+nonnegative, recurrence makes sense, and insists on a nonempty title.
+
+What we plan on to complete by the end of the project: We want to make a more flexible UI. Maybe where we do not need to follow 
+specific event syntax to input something into the calendar. Maybe where you can just give it the fields you want and it will just 
+create the event for you. I want to add more delete functionality. The delete functionality should be able to delete given an ID, 
+a time, or a title. That way we have more ways to delete something that we do not want. 
+
+Our event type doesn’t yet have the implemented logic that expands recurring events into concrete occurrences across dates, so they 
+don’t appear multiple times in rendered views and are not included in conflict detection beyond the single stored data in the base Event. 
+We will later implement filtered calendar views too. The calendar support chronological order, but it doesn’t support command-line options 
+to show only a specific day, week or filter by fields just yet, we plan on working on that as well.
+
+For persistence and export, we gave a basic on-disk storage system by saving the calendar to <DIR>/calendar.txt using show and reloading 
+it using readMaybe, but we’re still working on building a more structured database/log of past events or forms of history/ version tracking. 
+We’re considering implementing a JSON export/import system as well.
+
+The Hard features we’re focusing on have not been implemented yet, but we plan on trying to build constraint-based scheduling to fit 
+flexible tasks into available time slots and a rescheduling recommendation generator. We look forward to presenting those in the future.
