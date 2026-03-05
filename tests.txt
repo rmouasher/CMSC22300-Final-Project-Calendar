@@ -1,16 +1,33 @@
-runghc Main.hs \
-  --calendar "Calendar {events = []}" \
-  --event "Event { eventId = EventId 1, title = Title \"Study\", date = Date {year=2026, month=2, day=24}, time = TimeInterval {start = TimeOfDay {hour=9, minute=0}, end = TimeOfDay {hour=10, minute=0}}, location = Just (Location \"Harper Library\"), reminders = [], recurrence = NoRecurrence, notes = Just (Notes \"Freaky ahh\") }"
+
+
+## add event "study" to mycal it will create if it does not exist
+  
+  cabal run calendar-project -- \
+  --dir "./mycal" \
+  --add "Event { eventId = EventId 1, title = Title \"Study\", date = Date {year=2026, month=2, day=24}, time = TimeInterval {start = TimeOfDay {hour=9, minute=0}, end = TimeOfDay {hour=10, minute=0}}, location = Just (Location \"Harper\"), reminders = [], recurrence = NoRecurrence, notes = Nothing }"
+
+## add event "not study" to mycal it will create if it does not exist
 
   cabal run calendar-project -- \
   --dir "./mycal" \
-  --event "Event { eventId = EventId 2, title = Title \"Meeting\", date = Date {year=2026, month=2, day=24}, time = TimeInterval {start = TimeOfDay {hour=13, minute=0}, end = TimeOfDay {hour=14, minute=0}}, location = Nothing, reminders = [], recurrence = NoRecurrence, notes = Nothing }"
+  --add "Event { eventId = EventId 2, title = Title \"Not study\", date = Date {year=2026, month=2, day=24}, time = TimeInterval {start = TimeOfDay {hour=9, minute=0}, end = TimeOfDay {hour=10, minute=0}}, location = Just (Location \"Harper\"), reminders = [], recurrence = NoRecurrence, notes = Nothing }"
 
 
-  cabal run calendar-project -- \
+## add event "Jump Scare" to mycal it will create if it does not exist
+
+ cabal run calendar-project -- \
   --dir "./mycal" \
-  --event "Event { eventId = EventId 3, title = Title \"Freaky AHH\", date = Date {year=2028, month=69, day=69}, time = TimeInterval {start = TimeOfDay {hour=13, minute=0}, end = TimeOfDay {hour=14, minute=0}}, location = Nothing, reminders = [], recurrence = NoRecurrence, notes = Nothing }"
+  --add "Event { eventId = EventId 3, title = Title \"Jump Scare\", date = Date {year=2027, month=2, day=24}, time = TimeInterval {start = TimeOfDay {hour=9, minute=0}, end = TimeOfDay {hour=10, minute=0}}, location = Just (Location \"Harper\"), reminders = [], recurrence = NoRecurrence, notes = Nothing }"
 
-  cabal run calendar-project -- \
-  --dir "./mycal" \
-  --event "Event { eventId = EventId 3, title = Title \"Dick balls\", date = Date {year=2028, month=69, day=69}, time = TimeInterval {start = TimeOfDay {hour=13, minute=0}, end = TimeOfDay {hour=14, minute=0}}, location = Nothing, reminders = [], recurrence = NoRecurrence, notes = Nothing }"
+
+## print the calendar
+
+cabal run calendar-project -- --dir "./mycal" --print
+
+
+## delete  event with ID 1 from the calendar
+cabal run calendar-project -- --dir "./mycal" --delete 1
+
+## print the calendar should see event is gone now
+
+cabal run calendar-project -- --dir "./mycal" --print
