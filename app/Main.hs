@@ -8,6 +8,7 @@ import Data.List (sortOn)
 import Text.Printf (printf)
 import System.Directory (doesFileExist, createDirectoryIfMissing)
 import System.FilePath ((</>))
+import System.IO (hFlush, stdout)
 
 -- Flag Parser
 getFlag :: String -> [String] -> Maybe String
@@ -25,13 +26,14 @@ hasFlag flag (x:xs) = (x == flag) || hasFlag flag xs
 usage :: String
 usage = unlines
   [ "Usage:"
-  , "  cabal run calendar-project -- [--dir <DIR>] --add '<EVENT>'"
+  , "  cabal run calendar-project -- [--dir <DIR>] --add --id <INT> --title <TEXT> --date <YYYY-MM-DD> --start <HH:MM> --end <HH:MM> [--location <TEXT>] [--notes <TEXT>]"
   , "  cabal run calendar-project -- [--dir <DIR>] --delete <EVENT_ID>"
   , "  cabal run calendar-project -- [--dir <DIR>] --print"
   , ""
-  , "Notes:"
-  , "  - Calendar is stored at <DIR>/calendar.txt (default DIR is current directory '.')"
-  , "  - EVENT must be valid Haskell syntax for your Event type (Read instance)"
+  , "Examples:"
+  , "  cabal run calendar-project -- --dir ./mycal --add --id 2 --title \"Not study\" --date 2026-02-24 --start 09:00 --end 10:00 --location \"Harper\""
+  , "  cabal run calendar-project -- --dir ./mycal --delete 2"
+  , "  cabal run calendar-project -- --dir ./mycal --print"
   ]
 
 
@@ -101,10 +103,10 @@ data Event = Event
   { eventId    :: EventId      
   , title      :: Title         
   , date       :: Date             
-  , time       :: TimeInterval    
+  , time       :: Maybe TimeInterval    
   , location   :: Maybe Location   
-  , reminders  :: [Reminder]         
-  , recurrence :: Recurrence         
+  , reminders  :: Maybe [Reminder]         
+  , recurrence :: Maybe Recurrence         
   , notes      :: Maybe Notes        
   } deriving (Eq, Show, Read)
 
@@ -199,6 +201,10 @@ isValidTimeOfDay (TimeOfDay h m)
   | m < 0 || m > 59 = False
   | otherwise       = True
 
+isValidIntervalMaybe :: Maybe TimeInterval -> Bool
+isValidIntervalMaybe Nothing  = True
+isValidIntervalMaybe (Just t) = isValidInterval t
+
 isValidInterval :: TimeInterval -> Bool
 isValidInterval (TimeInterval s e)
   | not (isValidTimeOfDay s) = False
@@ -213,6 +219,11 @@ validateReminder r =
     HoursBefore   n -> n >= 0
     DaysBefore    n -> n >= 0
 
+--validate optional recurrence
+isValidRecurrenceMaybe :: Maybe Recurrence -> Bool
+isValidRecurrenceMaybe Nothing  = True
+isValidRecurrenceMaybe (Just r) = isValidRecurrence r
+
 isValidRecurrence :: Recurrence -> Bool
 isValidRecurrence rec =
   case rec of
@@ -221,6 +232,11 @@ isValidRecurrence rec =
     Weekly _         -> True
     MonthlyByDay n   -> n >= 1 && n <= 31
     Until d innerRec -> isValidDate d && isValidRecurrence innerRec
+
+--validate optional reminder
+firstInvalidReminderMaybe :: Maybe [Reminder] -> Maybe Reminder
+firstInvalidReminderMaybe Nothing   = Nothing
+firstInvalidReminderMaybe (Just rs) = firstInvalidReminder rs
 
 firstInvalidReminder :: [Reminder] -> Maybe Reminder
 firstInvalidReminder [] = Nothing
@@ -235,12 +251,12 @@ validateEvent ev =
     _ ->
       if not (isValidDate (date ev)) then
         Left ("Invalid event date: " ++ show (date ev))
-      else if not (isValidInterval (time ev)) then
+      else if not (isValidIntervalMaybe (time ev)) then
         Left ("Invalid event time interval: " ++ show (time ev))
-      else if not (isValidRecurrence (recurrence ev)) then
+      else if not (isValidRecurrenceMaybe (recurrence ev)) then
         Left ("Invalid recurrence rule: " ++ show (recurrence ev))
       else
-        case firstInvalidReminder (reminders ev) of
+        case firstInvalidReminderMaybe (reminders ev) of
           Just badR -> Left ("Invalid reminder: " ++ show badR)
           Nothing   -> Right ev
 
@@ -263,9 +279,12 @@ conflictBetween :: Event -> Event -> Maybe Conflict
 conflictBetween a b
   | date a /= date b = Nothing
   | otherwise =
-      case overlapInterval (time a) (time b) of
-        Nothing -> Nothing
-        Just ov -> Just (Conflict a b (Overlap ov))
+      case (time a, time b) of
+        (Just ta, Just tb) ->
+          case overlapInterval ta tb of
+            Nothing -> Nothing
+            Just ov -> Just (Conflict a b (Overlap ov))
+        _ -> Nothing
 
 -- conflicts for adding one event into a calendar
 conflictsFor :: Calendar -> Event -> [Conflict]
@@ -292,6 +311,107 @@ allConflicts (Calendar es) = go es
         Just c  -> c : conflictsWith e xs
 
 
+-- Date and Time Parsers
+splitOn :: Char -> String -> [String]
+splitOn _ [] = [""]
+splitOn delim (c:cs)
+  | c == delim = "" : splitOn delim cs
+  | otherwise =
+      case splitOn delim cs of
+        []     -> [[c]]
+        (x:xs) -> (c : x) : xs
+
+parseDate :: String -> Maybe Date
+parseDate s =
+  case splitOn '-' s of
+    [ys, ms, ds] ->
+      case (readMaybe ys :: Maybe Int, readMaybe ms :: Maybe Int, readMaybe ds :: Maybe Int) of
+        (Just y, Just m, Just d) -> Just (Date y m d)
+        _                        -> Nothing
+    _ -> Nothing
+
+parseTimeOfDay :: String -> Maybe TimeOfDay
+parseTimeOfDay s =
+  case splitOn ':' s of
+    [hs, ms] ->
+      case (readMaybe hs :: Maybe Int, readMaybe ms :: Maybe Int) of
+        (Just h, Just m) -> Just (TimeOfDay h m)
+        _                -> Nothing
+    _ -> Nothing
+
+
+-- Event Interactivity - the loop
+readRequiredDate :: IO Date
+readRequiredDate = do
+  s <- prompt "Date (YYYY-MM-DD):"
+  case parseDate s of
+    Just d  -> pure d
+    Nothing -> do
+      putStrLn "Invalid date format. Please try again."
+      readRequiredDate
+
+readOptionalTime :: String -> IO (Maybe TimeOfDay)
+readOptionalTime label = do
+  ms <- promptOptional label
+  case ms of
+    Nothing -> pure Nothing
+    Just s ->
+      case parseTimeOfDay s of
+        Just t  -> pure (Just t)
+        Nothing -> do
+          putStrLn "Invalid time format. Please use HH:MM."
+          readOptionalTime label
+
+readRequiredInt :: String -> IO Int
+readRequiredInt label = do
+  s <- prompt label
+  case readMaybe s :: Maybe Int of
+    Just n  -> pure n
+    Nothing -> do
+      putStrLn "Please enter a valid integer."
+      readRequiredInt label
+
+buildEventInteractive :: IO Event
+buildEventInteractive = do
+  eidNum <- readRequiredInt "Event ID:"
+  ttlStr <- prompt "Title:"
+  d      <- readRequiredDate
+  mStart <- readOptionalTime "Start (HH:MM, optional):"
+  mEnd   <- readOptionalTime "End (HH:MM, optional):"
+  mLoc   <- promptOptional "Location (optional):"
+  mNotes <- promptOptional "Notes (optional):"
+
+  let mInterval =
+        case (mStart, mEnd) of
+          (Nothing, Nothing) -> Nothing
+          (Just s, Just e)   -> Just (TimeInterval s e)
+          _                  -> Nothing
+
+  pure Event
+    { eventId    = EventId eidNum
+    , title      = Title ttlStr
+    , date       = d
+    , time       = mInterval
+    , location   = fmap Location mLoc
+    , reminders  = Nothing
+    , recurrence = Nothing
+    , notes      = fmap Notes mNotes
+    }
+
+
+-- Interactivity Helpers
+prompt :: String -> IO String
+prompt label = do
+  putStr (label ++ " ")
+  hFlush stdout
+  getLine
+
+promptOptional :: String -> IO (Maybe String)
+promptOptional label = do
+  putStr (label ++ " ")
+  hFlush stdout
+  s <- getLine
+  if null s then pure Nothing else pure (Just s)
 
 renderCalendar :: Calendar -> String
 renderCalendar (Calendar es) =
@@ -303,13 +423,16 @@ renderCalendar (Calendar es) =
         : map renderEventLine xs
 
 sortEvents :: [Event] -> [Event]
-sortEvents = sortOn (\e -> (date e, start (time e), eventId e))
+sortEvents = sortOn (\e -> (date e, maybe (-1) (toMinutes . start) (time e), eventId e))
 
 renderEventLine :: Event -> String
 renderEventLine e =
   let Date y m d = date e
-      TimeInterval s t = time e
       Title ttl = title e
+      timeStr =
+        case time e of
+          Nothing -> "No time"
+          Just (TimeInterval s t) -> renderTime s ++ "-" ++ renderTime t
       locStr =
         case location e of
           Nothing -> ""
@@ -317,9 +440,9 @@ renderEventLine e =
       noteStr =
         case notes e of
           Nothing -> ""
-          Just (Notes note) -> " @ " ++ note
-  in printf "%04d-%02d-%02d %s-%s  %s%s%s"
-            y m d (renderTime s) (renderTime t) ttl locStr noteStr
+          Just (Notes note) -> " | " ++ note
+  in printf "%04d-%02d-%02d %s  %s%s%s"
+            y m d timeStr ttl locStr noteStr
 
 renderTime :: TimeOfDay -> String
 renderTime (TimeOfDay h mn) = printf "%02d:%02d" h mn
@@ -353,52 +476,65 @@ readEventId s = EventId <$> (readMaybe s :: Maybe Int)
 
 
 
+menu :: IO String
+menu = do
+  putStrLn ""
+  putStrLn "Calendar Menu"
+  putStrLn "1) Add event"
+  putStrLn "2) Delete event"
+  putStrLn "3) Print calendar"
+  putStrLn "4) Quit"
+  prompt "Input:"
+
+appLoop :: FilePath -> Calendar -> IO ()
+appLoop dir cal = do
+  choice <- menu
+  case choice of
+    "1" -> do
+      ev <- buildEventInteractive
+      case validateEvent ev of
+        Left err -> do
+          putStrLn err
+          appLoop dir cal
+        Right validEv ->
+          case addEvent cal validEv of
+            Nothing -> do
+              putStrLn "Conflict: event NOT added."
+              appLoop dir cal
+            Just cal' -> do
+              saveCalendar dir cal'
+              putStrLn "Added."
+              appLoop dir cal'
+
+    "2" -> do
+      s <- prompt "Event ID to delete:"
+      case readEventId s of
+        Nothing -> do
+          putStrLn "Invalid event ID."
+          appLoop dir cal
+        Just eid ->
+          case deleteEvent eid cal of
+            Nothing -> do
+              putStrLn "No such event ID."
+              appLoop dir cal
+            Just cal' -> do
+              saveCalendar dir cal'
+              putStrLn "Deleted."
+              appLoop dir cal'
+
+    "3" -> do
+      putStrLn (renderCalendar cal)
+      appLoop dir cal
+
+    "4" -> putStrLn "Goodbye."
+
+    _ -> do
+      putStrLn "Invalid choice."
+      appLoop dir cal
+
 main :: IO ()
 main = do
   args <- getArgs
-
-  let dir     = maybe "." id (getFlag "--dir" args)
-      mAddStr = getFlag "--add" args
-      mDelStr = getFlag "--delete" args
-      doPrint = hasFlag "--print" args
-
+  let dir = maybe "." id (getFlag "--dir" args)
   cal <- loadCalendar dir
-
-  case (mAddStr, mDelStr, doPrint) of
-    (Just _, Just _, _) -> putStrLn "Error: choose only one of --add, --delete, or --print.\n" >> putStrLn usage
-    (Just _, _, True)   -> putStrLn "Error: choose only one of --add, --delete, or --print.\n" >> putStrLn usage
-    (_, Just _, True)   -> putStrLn "Error: choose only one of --add, --delete, or --print.\n" >> putStrLn usage
-
-    -- print
-    (Nothing, Nothing, True) ->
-      putStrLn (renderCalendar cal)
-
-    -- add
-    (Just evStr, Nothing, False) ->
-      case readMaybe evStr :: Maybe Event of
-        Nothing -> putStrLn ("Could not parse --add EVENT.\n\n" ++ usage)
-        Just ev ->
-          case validateEvent ev of
-            Left err -> putStrLn err
-            Right validEv ->
-              case addEvent cal validEv of
-                Nothing -> putStrLn "Conflict: event NOT added."
-                Just cal' -> do
-                  saveCalendar dir cal'
-                  putStrLn "Added. Current calendar:"
-                  putStrLn (renderCalendar cal')
-
-    -- delete
-    (Nothing, Just delStr, False) ->
-      case readEventId delStr of
-        Nothing -> putStrLn ("Could not parse --delete EVENT_ID (expected an Int).\n\n" ++ usage)
-        Just eid ->
-          case deleteEvent eid cal of
-            Nothing -> putStrLn "No such event ID; nothing deleted."
-            Just cal' -> do
-              saveCalendar dir cal'
-              putStrLn "Deleted. Current calendar:"
-              putStrLn (renderCalendar cal')
-
-    -- no command
-    _ -> putStrLn usage
+  appLoop dir cal
