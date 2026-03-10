@@ -1,1 +1,1 @@
-Calendar {events = []}
+Calendar {events = [Event {eventId = EventId 1, title = Title "b", date = Date {year = 2004, month = 8, day = 17}, time = Nothing, location = Nothing, reminders = Nothing, recurrence = Nothing, notes = Nothing}]}
