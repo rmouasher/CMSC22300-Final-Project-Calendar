@@ -178,9 +178,28 @@ deleteEvent targetId (Calendar es)
   | exists targetId es = Just (Calendar (remove targetId es))
   | otherwise          = Nothing
 
+
+-- updatye event
+updateEvent :: EventId -> Event -> Calendar -> Maybe Calendar
+updateEvent targetId newEv (Calendar es)
+  | not (exists targetId es) = Nothing
+  | eventId newEv /= targetId = Nothing
+  | otherwise =
+      case validateEvent newEv of
+        Left _ -> Nothing
+        Right validEv ->
+          let calWithoutOld = Calendar (remove targetId es)
+          in addEvent calWithoutOld validEv
+
 exists :: EventId -> [Event] -> Bool
 exists _ []     = False
 exists i (e:es) = eventId e == i || exists i es
+
+findEvent :: EventId -> [Event] -> Maybe Event
+findEvent _ [] = Nothing
+findEvent eid (e:es)
+  | eventId e == eid = Just e
+  | otherwise        = findEvent eid es
 
 remove :: EventId -> [Event] -> [Event]
 remove _ [] = []
@@ -259,6 +278,105 @@ validateEvent ev =
         case firstInvalidReminderMaybe (reminders ev) of
           Just badR -> Left ("Invalid reminder: " ++ show badR)
           Nothing   -> Right ev
+
+
+
+promptKeep :: String -> String -> IO String
+promptKeep label oldVal = do
+  putStr (label ++ " [" ++ oldVal ++ "]: ")
+  hFlush stdout
+  s <- getLine
+  if null s then pure oldVal else pure s
+
+promptOptionalKeep :: String -> Maybe String -> IO (Maybe String)
+promptOptionalKeep label oldVal = do
+  let shown =
+        case oldVal of
+          Nothing -> ""
+          Just v  -> v
+  putStr (label ++ " [" ++ shown ++ "]: ")
+  hFlush stdout
+  s <- getLine
+  if null s
+    then pure oldVal
+    else pure (Just s)
+
+
+showDate :: Date -> String
+showDate (Date y m d) = printf "%04d-%02d-%02d" y m d
+
+showMaybeTimeInterval :: Maybe TimeInterval -> String
+showMaybeTimeInterval Nothing = ""
+showMaybeTimeInterval (Just (TimeInterval s e)) =
+  renderTime s ++ "-" ++ renderTime e
+
+showMaybeLocation :: Maybe Location -> Maybe String
+showMaybeLocation Nothing = Nothing
+showMaybeLocation (Just (Location s)) = Just s
+
+showMaybeNotes :: Maybe Notes -> Maybe String
+showMaybeNotes Nothing = Nothing
+showMaybeNotes (Just (Notes s)) = Just s
+
+buildUpdatedEventInteractive :: Event -> IO Event
+buildUpdatedEventInteractive oldEv = do
+  let eid = eventId oldEv
+
+  ttlStr <- promptKeep "New title" $
+    case title oldEv of
+      Title s -> s
+
+  dateStr <- promptKeep "New date (YYYY-MM-DD)" (showDate (date oldEv))
+  d <- case parseDate dateStr of
+         Just goodDate -> pure goodDate
+         Nothing -> do
+           putStrLn "Invalid date format. Keeping old date."
+           pure (date oldEv)
+
+  startStr <- promptKeep "New start (HH:MM, blank keeps old)" $
+    case time oldEv of
+      Nothing -> ""
+      Just (TimeInterval s _) -> renderTime s
+
+  endStr <- promptKeep "New end (HH:MM, blank keeps old)" $
+    case time oldEv of
+      Nothing -> ""
+      Just (TimeInterval _ e) -> renderTime e
+
+  mLocStr <- promptOptionalKeep "New location" (showMaybeLocation (location oldEv))
+  mNotesStr <- promptOptionalKeep "New notes" (showMaybeNotes (notes oldEv))
+
+  let mStart =
+        if null startStr
+          then case time oldEv of
+                 Nothing -> Nothing
+                 Just (TimeInterval s _) -> Just s
+          else parseTimeOfDay startStr
+
+      mEnd =
+        if null endStr
+          then case time oldEv of
+                 Nothing -> Nothing
+                 Just (TimeInterval _ e) -> Just e
+          else parseTimeOfDay endStr
+
+      mInterval =
+        case (mStart, mEnd) of
+          (Nothing, Nothing) -> Nothing
+          (Just s, Just e)   -> Just (TimeInterval s e)
+          _                  -> time oldEv
+
+  pure Event
+    { eventId    = eid
+    , title      = Title ttlStr
+    , date       = d
+    , time       = mInterval
+    , location   = fmap Location mLocStr
+    , reminders  = reminders oldEv
+    , recurrence = recurrence oldEv
+    , notes      = fmap Notes mNotesStr
+    }
+
 
 
 overlaps :: TimeInterval -> TimeInterval -> Bool
@@ -482,8 +600,9 @@ menu = do
   putStrLn "Calendar Menu"
   putStrLn "1) Add event"
   putStrLn "2) Delete event"
-  putStrLn "3) Print calendar"
-  putStrLn "4) Quit"
+  putStrLn "3) Update event"
+  putStrLn "4) Print calendar"
+  putStrLn "5) Quit"
   prompt "Input:"
 
 appLoop :: FilePath -> Calendar -> IO ()
@@ -523,10 +642,34 @@ appLoop dir cal = do
               appLoop dir cal'
 
     "3" -> do
+      s <- prompt "Event ID to update:"
+      case readEventId s of
+        Nothing -> do
+          putStrLn "Invalid event ID."
+          appLoop dir cal
+        Just eid ->
+          case findEvent eid (events cal) of
+            Nothing -> do
+              putStrLn "No such event ID."
+              appLoop dir cal
+            Just oldEv -> do
+              putStrLn "Current event:"
+              putStrLn (renderEventLine oldEv)
+              newEv <- buildUpdatedEventInteractive oldEv
+              case updateEvent eid newEv cal of
+                Nothing -> do
+                  putStrLn "Update failed. Event may be invalid or may conflict."
+                  appLoop dir cal
+                Just cal' -> do
+                  saveCalendar dir cal'
+                  putStrLn "Updated."
+                  appLoop dir cal'
+
+    "4" -> do
       putStrLn (renderCalendar cal)
       appLoop dir cal
 
-    "4" -> putStrLn "Goodbye."
+    "5" -> putStrLn "Goodbye."
 
     _ -> do
       putStrLn "Invalid choice."
