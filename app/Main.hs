@@ -473,7 +473,7 @@ saveCalendar dir cal = do
 
 readEventId :: String -> Maybe EventId
 readEventId s = EventId <$> (readMaybe s :: Maybe Int)
-
+-- nihao
 
 
 menu :: IO String
