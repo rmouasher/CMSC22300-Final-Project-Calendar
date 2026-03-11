@@ -179,7 +179,7 @@ deleteEvent targetId (Calendar es)
   | otherwise          = Nothing
 
 
--- updatye event
+-- update event
 updateEvent :: EventId -> Event -> Calendar -> Maybe Calendar
 updateEvent targetId newEv (Calendar es)
   | not (exists targetId es) = Nothing
