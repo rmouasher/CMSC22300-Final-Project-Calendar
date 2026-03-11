@@ -18,24 +18,6 @@ getFlag flag (x:y:rest)
   | otherwise = getFlag flag (y:rest)
 getFlag _ [_] = Nothing
 
--- For flags that don't take a value, like --print
-hasFlag :: String -> [String] -> Bool
-hasFlag _ [] = False
-hasFlag flag (x:xs) = (x == flag) || hasFlag flag xs
-
-usage :: String
-usage = unlines
-  [ "Usage:"
-  , "  cabal run calendar-project -- [--dir <DIR>] --add --id <INT> --title <TEXT> --date <YYYY-MM-DD> --start <HH:MM> --end <HH:MM> [--location <TEXT>] [--notes <TEXT>]"
-  , "  cabal run calendar-project -- [--dir <DIR>] --delete <EVENT_ID>"
-  , "  cabal run calendar-project -- [--dir <DIR>] --print"
-  , ""
-  , "Examples:"
-  , "  cabal run calendar-project -- --dir ./mycal --add --id 2 --title \"Not study\" --date 2026-02-24 --start 09:00 --end 10:00 --location \"Harper\""
-  , "  cabal run calendar-project -- --dir ./mycal --delete 2"
-  , "  cabal run calendar-project -- --dir ./mycal --print"
-  ]
-
 -------------------------------------------------------------
 --  Wrapper types (newtypes)
 -------------------------------------------------------------
@@ -109,7 +91,6 @@ newtype Calendar = Calendar
 
 data ConflictReason
   = Overlap TimeInterval   -- two events overlap during this interval
-  | SameStartTime
   deriving (Eq, Show)
 
 --  conflict is a pair of events and the reason.
@@ -118,13 +99,6 @@ data Conflict = Conflict
   , right :: Event
   , why :: ConflictReason
   } deriving (Eq, Show)
-
-data View
-  = DayView Date
-  | WeekView Date
-  | MonthView Int Int
-  | YearView Int
-  deriving (Eq, Show)
 
 data EventOccurrence = EventOccurrence
   { occSourceId :: EventId
@@ -181,10 +155,6 @@ addDaysToDate n dt
 
 dateInRange :: Date -> Date -> Date -> Bool
 dateInRange startD endD d = d >= startD && d <= endD
-
-eventsInRange :: Calendar -> Date -> Date -> [Event]
-eventsInRange (Calendar es) startD endD =
-  sortEvents (filter (\e -> dateInRange startD endD (date e)) es)
 
 weekdayFromDate :: Date -> Weekday
 weekdayFromDate dt =
@@ -263,10 +233,10 @@ occurrencesInRange (Calendar es) startD endD =
 
 
 addEvent :: Calendar -> Event -> Maybe Calendar
-addEvent cal@(Calendar es) e =
-  if null (conflictsFor cal e)
-     then Just (Calendar (e : es))
-     else Nothing
+addEvent cal@(Calendar es) e
+  | exists (eventId e) es = Nothing
+  | null (conflictsFor cal e) = Just (Calendar (e : es))
+  | otherwise = Nothing
 
 -------------------------------------------------------------
 -- Delete Event Functions
@@ -480,12 +450,6 @@ showMaybeNotes :: Maybe Notes -> Maybe String
 showMaybeNotes Nothing = Nothing
 showMaybeNotes (Just (Notes s)) = Just s
 
-renderEventsWithHeader :: String -> [Event] -> String
-renderEventsWithHeader header es =
-  case es of
-    [] -> header ++ "\nNo events.\n"
-    xs -> unlines (header : map renderEventLine xs)
-
 renderDayView :: Calendar -> Date -> String
 renderDayView cal d =
   renderOccurrencesWithHeader
@@ -693,21 +657,6 @@ conflictsFor (Calendar es) newEv = go es
       case conflictBetween e newEv of
         Nothing -> go rest
         Just c  -> c : go rest
-
--- all conflicts in a calendar
-allConflicts :: Calendar -> [Conflict]
-allConflicts (Calendar es) = go es
-  where
-    go [] = []
-    go (e:rest) = conflictsWith e rest ++ go rest
-
-    conflictsWith :: Event -> [Event] -> [Conflict]
-    conflictsWith _ [] = []
-    conflictsWith e (x:xs) =
-      case conflictBetween e x of
-        Nothing -> conflictsWith e xs
-        Just c  -> c : conflictsWith e xs
-
 
 -- Date and Time Parsers
 splitOn :: Char -> String -> [String]
@@ -927,16 +876,6 @@ printCalendarInteractive cal = do
 
     _ -> putStrLn "Invalid print option."
 
-
-renderCalendar :: Calendar -> String
-renderCalendar (Calendar es) =
-  case sortEvents es of
-    [] -> "Calendar is empty.\n"
-    xs ->
-      unlines $
-        ("Calendar (" ++ show (length xs) ++ " events):")
-        : map renderEventLine xs
-
 sortEvents :: [Event] -> [Event]
 sortEvents = sortOn (\e -> (date e, maybe (-1) (toMinutes . start) (time e), eventId e))
 
@@ -962,10 +901,8 @@ renderEventLine e =
 renderTime :: TimeOfDay -> String
 renderTime (TimeOfDay h mn) = printf "%02d:%02d" h mn
 
-
 calendarFileName :: FilePath
 calendarFileName = "calendar.txt"
-
 
 loadCalendar :: FilePath -> IO Calendar
 loadCalendar dir = do
