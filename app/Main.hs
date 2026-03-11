@@ -79,7 +79,9 @@ data Event = Event
   , time       :: Maybe TimeInterval    
   , location   :: Maybe Location         
   , recurrence :: Maybe Recurrence         
-  , notes      :: Maybe Notes        
+  , notes      :: Maybe Notes
+  , excludedDates :: [Date]
+     
   } deriving (Eq, Show, Read)
 
 
@@ -190,6 +192,7 @@ stripUntil rec =
 occursOnDate :: Event -> Date -> Bool
 occursOnDate ev d
   | d < date ev = False
+  | d `elem` excludedDates ev = False
   | otherwise =
       case recurrence ev of
         Nothing -> d == date ev
@@ -200,11 +203,11 @@ occursOnDate ev d
     withinUntil Nothing _ = True
     withinUntil (Just endD) x = x <= endD
 
-    matchesCore NoRecurrence   = d == date ev
-    matchesCore Daily          = d >= date ev
-    matchesCore (Weekly days') = d >= date ev && weekdayFromDate d `elem` days'
+    matchesCore NoRecurrence     = d == date ev
+    matchesCore Daily            = d >= date ev
+    matchesCore (Weekly days')   = d >= date ev && weekdayFromDate d `elem` days'
     matchesCore (MonthlyByDay n) = d >= date ev && day d == n
-    matchesCore (Until _ inner) = matchesCore inner
+    matchesCore (Until _ inner)  = matchesCore inner
 
 eventOccurrenceOn :: Event -> Date -> EventOccurrence
 eventOccurrenceOn ev d =
@@ -246,89 +249,51 @@ deleteEvent targetId (Calendar es)
   | exists targetId es = Just (Calendar (remove targetId es))
   | otherwise          = Nothing
 
-deleteWhere :: (Event -> Bool) -> Calendar -> Maybe Calendar
-deleteWhere predicate (Calendar es) =
-  let kept = filter (not . predicate) es
-  in if length kept == length es
-       then Nothing
-       else Just (Calendar kept)
 
-deleteByTitle :: String -> Calendar -> Maybe Calendar
-deleteByTitle ttl =
-  deleteWhere (\e ->
-    case title e of
-      Title s -> s == ttl)
 
-deleteByDate :: Date -> Calendar -> Maybe Calendar
-deleteByDate d =
-  deleteWhere (\e -> date e == d)
+deleteOneOccurrence :: EventId -> Date -> Calendar -> Maybe Calendar
+deleteOneOccurrence targetId targetDate (Calendar es) =
+  case go es of
+    Nothing  -> Nothing
+    Just es' -> Just (Calendar es')
+  where
+    go [] = Nothing
+    go (e:rest)
+      | eventId e /= targetId =
+          case go rest of
+            Nothing -> Nothing
+            Just rs -> Just (e : rs)
 
-deleteByDateAndTime :: Date -> TimeInterval -> Calendar -> Maybe Calendar
-deleteByDateAndTime d interval =
-  deleteWhere (\e -> date e == d && time e == Just interval)
+      | not (occursOnDate e targetDate) = Nothing
 
-deleteInteractive :: Calendar -> IO Calendar
-deleteInteractive cal = do
-  putStrLn ""
-  putStrLn "Delete Options"
-  putStrLn "1) Delete by ID"
-  putStrLn "2) Delete by exact title"
-  putStrLn "3) Delete by date"
-  putStrLn "4) Delete by exact date and time"
-  putStrLn "5) Return to menu"
-  choice <- prompt "Choose a delete option:"
+      | isRecurringEvent e =
+          let updated = e { excludedDates = addExcludedDate targetDate (excludedDates e) }
+          in Just (updated : rest)
 
-  case choice of
-    "1" -> do
-      s <- prompt "Event ID to delete:"
-      case readEventId s of
+      | otherwise =
+          Just (remove targetId (e : rest))
+
+-- Event Interactivity - the loop
+readRequiredDate :: IO Date
+readRequiredDate = do
+  s <- prompt "Date (YYYY-MM-DD):"
+  case parseDate s of
+    Just d  -> pure d
+    Nothing -> do
+      putStrLn "Invalid date format. Please try again."
+      readRequiredDate
+
+readOptionalTime :: String -> IO (Maybe TimeOfDay)
+readOptionalTime label = do
+  ms <- promptOptional label
+  case ms of
+    Nothing -> pure Nothing
+    Just s ->
+      case parseTimeOfDay s of
+        Just t  -> pure (Just t)
         Nothing -> do
-          putStrLn "Invalid event ID."
-          pure cal
-        Just eid ->
-          case deleteEvent eid cal of
-            Nothing -> do
-              putStrLn "No such event ID."
-              pure cal
-            Just cal' -> pure cal'
-
-    "2" -> do
-      ttl <- prompt "Exact title to delete:"
-      case deleteByTitle ttl cal of
-        Nothing -> do
-          putStrLn "No event matched that title."
-          pure cal
-        Just cal' -> pure cal'
-
-    "3" -> do
-      d <- readRequiredDate
-      case deleteByDate d cal of
-        Nothing -> do
-          putStrLn "No event matched that date."
-          pure cal
-        Just cal' -> pure cal'
-
-    "4" -> do
-      d <- readRequiredDate
-      mStart <- readOptionalTime "Start (HH:MM):"
-      mEnd   <- readOptionalTime "End (HH:MM):"
-      case (mStart, mEnd) of
-        (Just s, Just e) ->
-          case deleteByDateAndTime d (TimeInterval s e) cal of
-            Nothing -> do
-              putStrLn "No event matched that date and time."
-              pure cal
-            Just cal' -> pure cal'
-        _ -> do
-          putStrLn "You must provide both start and end times."
-          pure cal
-
-    "5" -> pure cal
-
-    _ -> do
-      putStrLn "Invalid delete option."
-      deleteInteractive cal
-
+          putStrLn "Invalid time format. Please use HH:MM."
+          readOptionalTime label
 
 -- update event
 updateEvent :: EventId -> Event -> Calendar -> Maybe Calendar
@@ -504,7 +469,6 @@ renderOccurrencesWithHeader header occs =
     [] -> header ++ "\nNo events.\n"
     xs -> unlines (header : map renderOccurrenceLine xs)
 
-
 buildUpdatedEventInteractive :: Event -> IO Event
 buildUpdatedEventInteractive oldEv = do
   let eid = eventId oldEv
@@ -554,13 +518,14 @@ buildUpdatedEventInteractive oldEv = do
           _                  -> time oldEv
 
   pure Event
-    { eventId    = eid
-    , title      = Title ttlStr
-    , date       = d
-    , time       = mInterval
-    , location   = fmap Location mLocStr
-    , recurrence = recurrence oldEv
-    , notes      = fmap Notes mNotesStr
+    { eventId       = eid
+    , title         = Title ttlStr
+    , date          = d
+    , time          = mInterval
+    , location      = fmap Location mLocStr
+    , recurrence    = recurrence oldEv
+    , notes         = fmap Notes mNotesStr
+    , excludedDates = excludedDates oldEv
     }
 
 
@@ -597,6 +562,7 @@ occurrenceConflict oa ob
                       , location   = occLocation oa
                       , recurrence = Nothing
                       , notes      = occNotes oa
+                      , excludedDates = []
                       }
                   rightEv =
                     Event
@@ -607,6 +573,7 @@ occurrenceConflict oa ob
                       , location   = occLocation ob
                       , recurrence = Nothing
                       , notes      = occNotes ob
+                      , excludedDates = []
                       }
               in Just (Conflict leftEv rightEv (Overlap ov))
         _ -> Nothing
@@ -757,27 +724,22 @@ readRecurrenceInteractive = do
               pure (Just r)
 
 
--- Event Interactivity - the loop
-readRequiredDate :: IO Date
-readRequiredDate = do
-  s <- prompt "Date (YYYY-MM-DD):"
-  case parseDate s of
-    Just d  -> pure d
-    Nothing -> do
-      putStrLn "Invalid date format. Please try again."
-      readRequiredDate
+addExcludedDate :: Date -> [Date] -> [Date]
+addExcludedDate d ds
+  | d `elem` ds = ds
+  | otherwise   = d : ds
 
-readOptionalTime :: String -> IO (Maybe TimeOfDay)
-readOptionalTime label = do
-  ms <- promptOptional label
-  case ms of
-    Nothing -> pure Nothing
-    Just s ->
-      case parseTimeOfDay s of
-        Just t  -> pure (Just t)
-        Nothing -> do
-          putStrLn "Invalid time format. Please use HH:MM."
-          readOptionalTime label
+
+
+
+isRecurringEvent :: Event -> Bool
+isRecurringEvent ev =
+  case recurrence ev of
+    Nothing          -> False
+    Just NoRecurrence -> False
+    Just _           -> True
+
+
 
 readRequiredInt :: String -> IO Int
 readRequiredInt label = do
@@ -806,13 +768,14 @@ buildEventInteractive = do
           _                  -> Nothing
 
   pure Event
-    { eventId    = EventId eidNum
-    , title      = Title ttlStr
-    , date       = d
-    , time       = mInterval
-    , location   = fmap Location mLoc
-    , recurrence = mRec
-    , notes      = fmap Notes mNotes
+    { eventId       = EventId eidNum
+    , title         = Title ttlStr
+    , date          = d
+    , time          = mInterval
+    , location      = fmap Location mLoc
+    , recurrence    = mRec
+    , notes         = fmap Notes mNotes
+    , excludedDates = []
     }
 
 
@@ -960,14 +923,49 @@ appLoop dir cal = do
           putStrLn "Invalid event ID."
           appLoop dir cal
         Just eid ->
-          case deleteEvent eid cal of
+          case findEvent eid (events cal) of
             Nothing -> do
               putStrLn "No such event ID."
               appLoop dir cal
-            Just cal' -> do
-              saveCalendar dir cal'
-              putStrLn "Deleted."
-              appLoop dir cal'
+            Just ev ->
+              if isRecurringEvent ev
+                then do
+                  putStrLn "This event is recurring."
+                  putStrLn "1) Delete one instance"
+                  putStrLn "2) Delete all instances"
+                  delChoice <- prompt "Choose delete mode:"
+                  case delChoice of
+                    "1" -> do
+                      d <- readRequiredDate
+                      case deleteOneOccurrence eid d cal of
+                        Nothing -> do
+                          putStrLn "That occurrence was not found."
+                          appLoop dir cal
+                        Just cal' -> do
+                          saveCalendar dir cal'
+                          putStrLn "Deleted one occurrence."
+                          appLoop dir cal'
+                    "2" ->
+                      case deleteEvent eid cal of
+                        Nothing -> do
+                          putStrLn "No such event ID."
+                          appLoop dir cal
+                        Just cal' -> do
+                          saveCalendar dir cal'
+                          putStrLn "Deleted all instances."
+                          appLoop dir cal'
+                    _ -> do
+                      putStrLn "Invalid choice."
+                      appLoop dir cal
+                else
+                  case deleteEvent eid cal of
+                    Nothing -> do
+                      putStrLn "No such event ID."
+                      appLoop dir cal
+                    Just cal' -> do
+                      saveCalendar dir cal'
+                      putStrLn "Deleted."
+                      appLoop dir cal'
 
     "3" -> do
       s <- prompt "Event ID to update:"
