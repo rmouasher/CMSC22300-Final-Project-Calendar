@@ -36,10 +36,9 @@ usage = unlines
   , "  cabal run calendar-project -- --dir ./mycal --print"
   ]
 
-
+-------------------------------------------------------------
 --  Wrapper types (newtypes)
-
-
+-------------------------------------------------------------
 newtype Title    = Title String
   deriving (Eq, Ord, Show, Read)
 
@@ -52,8 +51,9 @@ newtype Notes    = Notes String
 newtype EventId  = EventId Int
   deriving (Eq, Ord, Show, Read)
 
--- Date / time / intervals
-
+-------------------------------------------------------------
+-- Date / time / intervals / definitions
+-------------------------------------------------------------
 -- date type to compare
 data Date = Date
   { year  :: Int
@@ -72,15 +72,6 @@ data TimeInterval = TimeInterval
   { start :: TimeOfDay
   , end   :: TimeOfDay
   } deriving (Eq, Ord, Show, Read)
-
--- Reminders (still need to implement)
-
-data Reminder
-  = MinutesBefore Int
-  | HoursBefore   Int
-  | DaysBefore    Int
-  deriving (Eq, Ord, Show, Read)
-
 
 -- repeating events
 
@@ -104,8 +95,7 @@ data Event = Event
   , title      :: Title         
   , date       :: Date             
   , time       :: Maybe TimeInterval    
-  , location   :: Maybe Location   
-  , reminders  :: Maybe [Reminder]         
+  , location   :: Maybe Location         
   , recurrence :: Maybe Recurrence         
   , notes      :: Maybe Notes        
   } deriving (Eq, Show, Read)
@@ -113,12 +103,9 @@ data Event = Event
 
 -- calendar type 
 
-
 newtype Calendar = Calendar
   { events :: [Event]
   } deriving (Eq, Show, Read)
-
-
 
 data ConflictReason
   = Overlap TimeInterval   -- two events overlap during this interval
@@ -132,18 +119,21 @@ data Conflict = Conflict
   , why :: ConflictReason
   } deriving (Eq, Show)
 
-
 data View
   = DayView Date
   | WeekView Date
+  | MonthView Int Int
+  | YearView Int
   deriving (Eq, Show)
 
-isLeapYear :: Int -> Bool
-isLeapYear y
-  | y `mod` 400 == 0 = True
-  | y `mod` 100 == 0 = False
-  | y `mod` 4   == 0 = True
-  | otherwise        = False
+data EventOccurrence = EventOccurrence
+  { occSourceId :: EventId
+  , occTitle    :: Title
+  , occDate     :: Date
+  , occTime     :: Maybe TimeInterval
+  , occLocation :: Maybe Location
+  , occNotes    :: Maybe Notes
+  } deriving (Eq, Show)
 
 daysInMonth :: Int -> Int -> Int
 daysInMonth y m =
@@ -162,8 +152,115 @@ daysInMonth y m =
     12 -> 31
     _  -> 0
 
+isLeapYear :: Int -> Bool
+isLeapYear y
+  | y `mod` 400 == 0 = True
+  | y `mod` 100 == 0 = False
+  | y `mod` 4   == 0 = True
+  | otherwise        = False
+
 toMinutes :: TimeOfDay -> Int
 toMinutes (TimeOfDay h m) = h * 60 + m
+
+nextDate :: Date -> Date
+nextDate (Date y m d)
+  | d < daysInMonth y m = Date y m (d + 1)
+  | m < 12              = Date y (m + 1) 1
+  | otherwise           = Date (y + 1) 1 1
+
+prevDate :: Date -> Date
+prevDate (Date y m d)
+  | d > 1     = Date y m (d - 1)
+  | m > 1     = let pm = m - 1 in Date y pm (daysInMonth y pm)
+  | otherwise = Date (y - 1) 12 31
+
+addDaysToDate :: Int -> Date -> Date
+addDaysToDate n dt
+  | n <= 0    = dt
+  | otherwise = addDaysToDate (n - 1) (nextDate dt)
+
+dateInRange :: Date -> Date -> Date -> Bool
+dateInRange startD endD d = d >= startD && d <= endD
+
+eventsInRange :: Calendar -> Date -> Date -> [Event]
+eventsInRange (Calendar es) startD endD =
+  sortEvents (filter (\e -> dateInRange startD endD (date e)) es)
+
+weekdayFromDate :: Date -> Weekday
+weekdayFromDate dt =
+  case weekdayIndex dt of
+    0 -> Mon
+    1 -> Tue
+    2 -> Wed
+    3 -> Thu
+    4 -> Fri
+    5 -> Sat
+    _ -> Sun
+
+weekdayIndex :: Date -> Int
+weekdayIndex d = go (Date 1900 1 1) 0
+  where
+    go cur n
+      | cur == d   = n `mod` 7
+      | cur < d    = go (nextDate cur) (n + 1)
+      | otherwise  = go (prevDate cur) (n - 1)
+
+stripUntil :: Recurrence -> (Maybe Date, Recurrence)
+stripUntil rec =
+  case rec of
+    Until endDate inner ->
+      let (mEnd, core) = stripUntil inner
+          newEnd =
+            case mEnd of
+              Nothing -> Just endDate
+              Just e  -> Just (min endDate e)
+      in (newEnd, core)
+    _ -> (Nothing, rec)
+
+occursOnDate :: Event -> Date -> Bool
+occursOnDate ev d
+  | d < date ev = False
+  | otherwise =
+      case recurrence ev of
+        Nothing -> d == date ev
+        Just rec ->
+          let (mUntil, core) = stripUntil rec
+          in withinUntil mUntil d && matchesCore core
+  where
+    withinUntil Nothing _ = True
+    withinUntil (Just endD) x = x <= endD
+
+    matchesCore NoRecurrence   = d == date ev
+    matchesCore Daily          = d >= date ev
+    matchesCore (Weekly days') = d >= date ev && weekdayFromDate d `elem` days'
+    matchesCore (MonthlyByDay n) = d >= date ev && day d == n
+    matchesCore (Until _ inner) = matchesCore inner
+
+eventOccurrenceOn :: Event -> Date -> EventOccurrence
+eventOccurrenceOn ev d =
+  EventOccurrence
+    { occSourceId = eventId ev
+    , occTitle    = title ev
+    , occDate     = d
+    , occTime     = time ev
+    , occLocation = location ev
+    , occNotes    = notes ev
+    }
+
+expandEventInRange :: Event -> Date -> Date -> [EventOccurrence]
+expandEventInRange ev startD endD =
+  go startD
+  where
+    go cur
+      | cur > endD = []
+      | occursOnDate ev cur = eventOccurrenceOn ev cur : go (nextDate cur)
+      | otherwise           = go (nextDate cur)
+
+occurrencesInRange :: Calendar -> Date -> Date -> [EventOccurrence]
+occurrencesInRange (Calendar es) startD endD =
+  sortOn (\o -> (occDate o, maybe (-1) (toMinutes . start) (occTime o), occSourceId o))
+    (concatMap (\e -> expandEventInRange e startD endD) es)
+
 
 addEvent :: Calendar -> Event -> Maybe Calendar
 addEvent cal@(Calendar es) e =
@@ -171,12 +268,96 @@ addEvent cal@(Calendar es) e =
      then Just (Calendar (e : es))
      else Nothing
 
--- Delete Calendar Function
-
+-------------------------------------------------------------
+-- Delete Event Functions
+-------------------------------------------------------------
 deleteEvent :: EventId -> Calendar -> Maybe Calendar
 deleteEvent targetId (Calendar es)
   | exists targetId es = Just (Calendar (remove targetId es))
   | otherwise          = Nothing
+
+deleteWhere :: (Event -> Bool) -> Calendar -> Maybe Calendar
+deleteWhere predicate (Calendar es) =
+  let kept = filter (not . predicate) es
+  in if length kept == length es
+       then Nothing
+       else Just (Calendar kept)
+
+deleteByTitle :: String -> Calendar -> Maybe Calendar
+deleteByTitle ttl =
+  deleteWhere (\e ->
+    case title e of
+      Title s -> s == ttl)
+
+deleteByDate :: Date -> Calendar -> Maybe Calendar
+deleteByDate d =
+  deleteWhere (\e -> date e == d)
+
+deleteByDateAndTime :: Date -> TimeInterval -> Calendar -> Maybe Calendar
+deleteByDateAndTime d interval =
+  deleteWhere (\e -> date e == d && time e == Just interval)
+
+deleteInteractive :: Calendar -> IO Calendar
+deleteInteractive cal = do
+  putStrLn ""
+  putStrLn "Delete Options"
+  putStrLn "1) Delete by ID"
+  putStrLn "2) Delete by exact title"
+  putStrLn "3) Delete by date"
+  putStrLn "4) Delete by exact date and time"
+  putStrLn "5) Return to menu"
+  choice <- prompt "Choose a delete option:"
+
+  case choice of
+    "1" -> do
+      s <- prompt "Event ID to delete:"
+      case readEventId s of
+        Nothing -> do
+          putStrLn "Invalid event ID."
+          pure cal
+        Just eid ->
+          case deleteEvent eid cal of
+            Nothing -> do
+              putStrLn "No such event ID."
+              pure cal
+            Just cal' -> pure cal'
+
+    "2" -> do
+      ttl <- prompt "Exact title to delete:"
+      case deleteByTitle ttl cal of
+        Nothing -> do
+          putStrLn "No event matched that title."
+          pure cal
+        Just cal' -> pure cal'
+
+    "3" -> do
+      d <- readRequiredDate
+      case deleteByDate d cal of
+        Nothing -> do
+          putStrLn "No event matched that date."
+          pure cal
+        Just cal' -> pure cal'
+
+    "4" -> do
+      d <- readRequiredDate
+      mStart <- readOptionalTime "Start (HH:MM):"
+      mEnd   <- readOptionalTime "End (HH:MM):"
+      case (mStart, mEnd) of
+        (Just s, Just e) ->
+          case deleteByDateAndTime d (TimeInterval s e) cal of
+            Nothing -> do
+              putStrLn "No event matched that date and time."
+              pure cal
+            Just cal' -> pure cal'
+        _ -> do
+          putStrLn "You must provide both start and end times."
+          pure cal
+
+    "5" -> pure cal
+
+    _ -> do
+      putStrLn "Invalid delete option."
+      deleteInteractive cal
 
 
 -- update event
@@ -207,6 +388,7 @@ remove i (e:es)
   | eventId e == i = remove i es
   | otherwise      = e : remove i es
 
+--Validation checks
 isValidDate :: Date -> Bool
 isValidDate (Date y m d)
   | m < 1 || m > 12   = False
@@ -231,13 +413,6 @@ isValidInterval (TimeInterval s e)
   | toMinutes s >= toMinutes e = False
   | otherwise = True
 
-validateReminder :: Reminder -> Bool
-validateReminder r =
-  case r of
-    MinutesBefore n -> n >= 0
-    HoursBefore   n -> n >= 0
-    DaysBefore    n -> n >= 0
-
 --validate optional recurrence
 isValidRecurrenceMaybe :: Maybe Recurrence -> Bool
 isValidRecurrenceMaybe Nothing  = True
@@ -252,17 +427,6 @@ isValidRecurrence rec =
     MonthlyByDay n   -> n >= 1 && n <= 31
     Until d innerRec -> isValidDate d && isValidRecurrence innerRec
 
---validate optional reminder
-firstInvalidReminderMaybe :: Maybe [Reminder] -> Maybe Reminder
-firstInvalidReminderMaybe Nothing   = Nothing
-firstInvalidReminderMaybe (Just rs) = firstInvalidReminder rs
-
-firstInvalidReminder :: [Reminder] -> Maybe Reminder
-firstInvalidReminder [] = Nothing
-firstInvalidReminder (r:rs)
-  | validateReminder r = firstInvalidReminder rs
-  | otherwise          = Just r
-
 validateEvent :: Event -> Either String Event
 validateEvent ev =
   case title ev of
@@ -275,9 +439,7 @@ validateEvent ev =
       else if not (isValidRecurrenceMaybe (recurrence ev)) then
         Left ("Invalid recurrence rule: " ++ show (recurrence ev))
       else
-        case firstInvalidReminderMaybe (reminders ev) of
-          Just badR -> Left ("Invalid reminder: " ++ show badR)
-          Nothing   -> Right ev
+        Right ev
 
 
 
@@ -317,6 +479,67 @@ showMaybeLocation (Just (Location s)) = Just s
 showMaybeNotes :: Maybe Notes -> Maybe String
 showMaybeNotes Nothing = Nothing
 showMaybeNotes (Just (Notes s)) = Just s
+
+renderEventsWithHeader :: String -> [Event] -> String
+renderEventsWithHeader header es =
+  case es of
+    [] -> header ++ "\nNo events.\n"
+    xs -> unlines (header : map renderEventLine xs)
+
+renderDayView :: Calendar -> Date -> String
+renderDayView cal d =
+  renderOccurrencesWithHeader
+    ("Day view: " ++ showDate d)
+    (occurrencesInRange cal d d)
+
+renderWeekView :: Calendar -> Date -> String
+renderWeekView cal startD =
+  let endD = addDaysToDate 6 startD
+  in renderOccurrencesWithHeader
+       ("Week view: " ++ showDate startD ++ " to " ++ showDate endD)
+       (occurrencesInRange cal startD endD)
+
+renderMonthView :: Calendar -> Int -> Int -> String
+renderMonthView cal y m =
+  let startD = Date y m 1
+      endD   = Date y m (daysInMonth y m)
+  in renderOccurrencesWithHeader
+       (printf "Month view: %04d-%02d" y m)
+       (occurrencesInRange cal startD endD)
+
+renderYearView :: Calendar -> Int -> String
+renderYearView cal y =
+  let startD = Date y 1 1
+      endD   = Date y 12 31
+  in renderOccurrencesWithHeader
+       (printf "Year view: %04d" y)
+       (occurrencesInRange cal startD endD)
+
+renderOccurrenceLine :: EventOccurrence -> String
+renderOccurrenceLine occ =
+  let Date y m d = occDate occ
+      Title ttl = occTitle occ
+      timeStr =
+        case occTime occ of
+          Nothing -> "No time"
+          Just (TimeInterval s t) -> renderTime s ++ "-" ++ renderTime t
+      locStr =
+        case occLocation occ of
+          Nothing -> ""
+          Just (Location loc) -> " @ " ++ loc
+      noteStr =
+        case occNotes occ of
+          Nothing -> ""
+          Just (Notes note) -> " | " ++ note
+  in printf "%04d-%02d-%02d %s  %s%s%s"
+            y m d timeStr ttl locStr noteStr
+
+renderOccurrencesWithHeader :: String -> [EventOccurrence] -> String
+renderOccurrencesWithHeader header occs =
+  case occs of
+    [] -> header ++ "\nNo events.\n"
+    xs -> unlines (header : map renderOccurrenceLine xs)
+
 
 buildUpdatedEventInteractive :: Event -> IO Event
 buildUpdatedEventInteractive oldEv = do
@@ -372,7 +595,6 @@ buildUpdatedEventInteractive oldEv = do
     , date       = d
     , time       = mInterval
     , location   = fmap Location mLocStr
-    , reminders  = reminders oldEv
     , recurrence = recurrence oldEv
     , notes      = fmap Notes mNotesStr
     }
@@ -393,16 +615,74 @@ overlapInterval i1@(TimeInterval s1 e1) i2@(TimeInterval s2 e2)
   | otherwise = Nothing
 
 -- handle conflicts between events
-conflictBetween :: Event -> Event -> Maybe Conflict
-conflictBetween a b
-  | date a /= date b = Nothing
+occurrenceConflict :: EventOccurrence -> EventOccurrence -> Maybe Conflict
+occurrenceConflict oa ob
+  | occDate oa /= occDate ob = Nothing
   | otherwise =
-      case (time a, time b) of
+      case (occTime oa, occTime ob) of
         (Just ta, Just tb) ->
           case overlapInterval ta tb of
             Nothing -> Nothing
-            Just ov -> Just (Conflict a b (Overlap ov))
+            Just ov ->
+              let leftEv =
+                    Event
+                      { eventId    = occSourceId oa
+                      , title      = occTitle oa
+                      , date       = occDate oa
+                      , time       = occTime oa
+                      , location   = occLocation oa
+                      , recurrence = Nothing
+                      , notes      = occNotes oa
+                      }
+                  rightEv =
+                    Event
+                      { eventId    = occSourceId ob
+                      , title      = occTitle ob
+                      , date       = occDate ob
+                      , time       = occTime ob
+                      , location   = occLocation ob
+                      , recurrence = Nothing
+                      , notes      = occNotes ob
+                      }
+              in Just (Conflict leftEv rightEv (Overlap ov))
         _ -> Nothing
+
+conflictBetween :: Event -> Event -> Maybe Conflict
+conflictBetween a b =
+  let startD = max (date a) (date b)
+      endD   = recurrenceLimit a b
+      occsA  = expandEventInRange a startD endD
+      occsB  = expandEventInRange b startD endD
+  in firstOccurrenceConflict occsA occsB
+
+recurrenceLimit :: Event -> Event -> Date
+recurrenceLimit a b = minimumDate (eventEndCap a) (eventEndCap b)
+
+eventEndCap :: Event -> Date
+eventEndCap ev =
+  case recurrence ev of
+    Nothing -> date ev
+    Just rec ->
+      case stripUntil rec of
+        (Just endD, _) -> endD
+        (Nothing, _)   -> addDaysToDate 365 (date ev)
+
+minimumDate :: Date -> Date -> Date
+minimumDate x y = if x <= y then x else y
+
+firstOccurrenceConflict :: [EventOccurrence] -> [EventOccurrence] -> Maybe Conflict
+firstOccurrenceConflict [] _ = Nothing
+firstOccurrenceConflict (x:xs) ys =
+  case firstConflictWith x ys of
+    Just c  -> Just c
+    Nothing -> firstOccurrenceConflict xs ys
+
+firstConflictWith :: EventOccurrence -> [EventOccurrence] -> Maybe Conflict
+firstConflictWith _ [] = Nothing
+firstConflictWith x (y:ys) =
+  case occurrenceConflict x y of
+    Just c  -> Just c
+    Nothing -> firstConflictWith x ys
 
 -- conflicts for adding one event into a calendar
 conflictsFor :: Calendar -> Event -> [Conflict]
@@ -457,6 +737,76 @@ parseTimeOfDay s =
         _                -> Nothing
     _ -> Nothing
 
+parseWeekday :: String -> Maybe Weekday
+parseWeekday s =
+  case trim s of
+    "Mon" -> Just Mon
+    "Tue" -> Just Tue
+    "Wed" -> Just Wed
+    "Thu" -> Just Thu
+    "Fri" -> Just Fri
+    "Sat" -> Just Sat
+    "Sun" -> Just Sun
+    _     -> Nothing
+
+parseWeekdays :: String -> [Weekday]
+parseWeekdays s = mapMaybeWeekday (splitOn ',' s)
+
+trim :: String -> String
+trim = reverse . dropWhile (== ' ') . reverse . dropWhile (== ' ')
+
+readEventId :: String -> Maybe EventId
+readEventId s = EventId <$> (readMaybe s :: Maybe Int)
+
+readWeekdays :: IO [Weekday]
+readWeekdays = do
+  putStrLn "Enter weekdays separated by commas (Mon,Tue,Wed,Thu,Fri,Sat,Sun):"
+  s <- getLine
+  pure (parseWeekdays s)
+
+mapMaybeWeekday :: [String] -> [Weekday]
+mapMaybeWeekday [] = []
+mapMaybeWeekday (x:xs) =
+  case parseWeekday x of
+    Just w  -> w : mapMaybeWeekday xs
+    Nothing -> mapMaybeWeekday xs
+
+readRecurrenceInteractive :: IO (Maybe Recurrence)
+readRecurrenceInteractive = do
+  putStrLn ""
+  putStrLn "Recurrence Options"
+  putStrLn "1) None"
+  putStrLn "2) Daily"
+  putStrLn "3) Weekly"
+  putStrLn "4) Monthly by day-of-month"
+  choice <- prompt "Choose recurrence:"
+
+  coreRec <- case choice of
+    "1" -> pure Nothing
+    "2" -> pure (Just Daily)
+    "3" -> do
+      ds <- readWeekdays
+      pure (Just (Weekly ds))
+    "4" -> do
+      n <- readRequiredInt "Day of month (1-31):"
+      pure (Just (MonthlyByDay n))
+    _ -> do
+      putStrLn "Invalid choice. Using no recurrence."
+      pure Nothing
+
+  case coreRec of
+    Nothing -> pure Nothing
+    Just r -> do
+      ans <- promptOptional "Until date (YYYY-MM-DD, optional):"
+      case ans of
+        Nothing -> pure (Just r)
+        Just s ->
+          case parseDate s of
+            Just d  -> pure (Just (Until d r))
+            Nothing -> do
+              putStrLn "Invalid until-date. Keeping recurrence without end date."
+              pure (Just r)
+
 
 -- Event Interactivity - the loop
 readRequiredDate :: IO Date
@@ -497,6 +847,7 @@ buildEventInteractive = do
   mStart <- readOptionalTime "Start (HH:MM, optional):"
   mEnd   <- readOptionalTime "End (HH:MM, optional):"
   mLoc   <- promptOptional "Location (optional):"
+  mRec   <- readRecurrenceInteractive
   mNotes <- promptOptional "Notes (optional):"
 
   let mInterval =
@@ -511,8 +862,7 @@ buildEventInteractive = do
     , date       = d
     , time       = mInterval
     , location   = fmap Location mLoc
-    , reminders  = Nothing
-    , recurrence = Nothing
+    , recurrence = mRec
     , notes      = fmap Notes mNotes
     }
 
@@ -530,6 +880,53 @@ promptOptional label = do
   hFlush stdout
   s <- getLine
   if null s then pure Nothing else pure (Just s)
+
+readMonthNumber :: IO Int
+readMonthNumber = do
+  m <- readRequiredInt "Month (1-12):"
+  if m >= 1 && m <= 12
+    then pure m
+    else do
+      putStrLn "Month must be between 1 and 12."
+      readMonthNumber
+
+readYearNumber :: IO Int
+readYearNumber = readRequiredInt "Year:"
+
+printCalendarInteractive :: Calendar -> IO ()
+printCalendarInteractive cal = do
+  putStrLn ""
+  putStrLn "Print Options"
+  putStrLn "1) Specific day"
+  putStrLn "2) Specific week"
+  putStrLn "3) Specific month"
+  putStrLn "4) Specific year"
+  putStrLn "5) Return to menu"
+  choice <- prompt "Choose a print range:"
+
+  case choice of
+    "1" -> do
+      d <- readRequiredDate
+      putStrLn (renderDayView cal d)
+
+    "2" -> do
+      putStrLn "Enter the starting day of the week."
+      d <- readRequiredDate
+      putStrLn (renderWeekView cal d)
+
+    "3" -> do
+      y <- readYearNumber
+      m <- readMonthNumber
+      putStrLn (renderMonthView cal y m)
+
+    "4" -> do
+      y <- readYearNumber
+      putStrLn (renderYearView cal y)
+    
+    "5" -> pure ()
+
+    _ -> putStrLn "Invalid print option."
+
 
 renderCalendar :: Calendar -> String
 renderCalendar (Calendar es) =
@@ -587,12 +984,6 @@ saveCalendar dir cal = do
   createDirectoryIfMissing True dir
   let fp = dir </> calendarFileName
   writeFile fp (show cal)
-
-
-readEventId :: String -> Maybe EventId
-readEventId s = EventId <$> (readMaybe s :: Maybe Int)
--- nihao
-
 
 menu :: IO String
 menu = do
@@ -666,10 +1057,11 @@ appLoop dir cal = do
                   appLoop dir cal'
 
     "4" -> do
-      putStrLn (renderCalendar cal)
+      printCalendarInteractive cal
       appLoop dir cal
 
-    "5" -> putStrLn "Goodbye."
+
+    "5" -> putStrLn "Shutting down calendar."
 
     _ -> do
       putStrLn "Invalid choice."
