@@ -34,3 +34,6 @@ We’re considering implementing a JSON export/import system as well.
 
 The Hard features we’re focusing on have not been implemented yet, but we plan on trying to build constraint-based scheduling to fit 
 flexible tasks into available time slots and a rescheduling recommendation generator. We look forward to presenting those in the future.
+
+
+
