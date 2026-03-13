@@ -1,0 +1,65 @@
+Functional Command Line Project Report
+
+At a high level, the program is organized around one main source file, Main.hs. Within that file, the code is grouped into code 
+logic groups: The first one defines the programs core data types: EventId, Title, Location, Notes, Date, TimeOfDay, TimeInterval, 
+Recurrence, Event, Calendar, Conflict, and EventOccurrence. These types provide the structure for all the logic later on. The next 
+section defines date and recurrence helpers such as leap-year handling, days-in-month, date stepping, weekday calculation, and recurrence 
+expansion. These functions are what let the calendar interpret the daily, weekly, monthly, or ‘until a certain date’ rules. After that, the 
+program implements validation and conflict logic. Validation checks that dates, times, intervals, and recurrence rules make sense before an event 
+is accepted by the calendar wrapper. After that, conflict detection functions check whether two events overlap in time, including when recurring 
+events generate multiple occurrences. The program’s main functionalities are the calendar operations addEvent, deleteEvent, updateEvent, deleteOneOccurrence 
+for recurring events, and helper functions for finding or removing events. The rendering section contains the functions used to print day, week, month, and 
+year views by expanding recurring events into dated occurrences. Finally, the interactive UI and persistence logic appear near the bottom of the file: prompt
+ helpers gather user input, the menu and appLoop functions drive interaction, and loadCalendar/saveCalendar read and write the calendar to disk.
+
+After using cabal run to initiate the program, it will load a saved calendar from calendar.txt if the file exists (otherwise it will create the file).
+
+It then presents the five actions the user can use when their calendar is running:
+
+Add Event: Lets a user create a new event and insert it into their calendar. When you choose the option to add an event in the main menu, the
+ program walks you through the fields needed to complete an event data type. Those inputs are gathered by the buildEventInteractive function, which 
+ constructs a new event based on user I/O. Once the event is constructed, it is passed to validateEvent, which will check if the data inputted is valid: 
+ that the date is valid, the time interval makes sense, and that the recurrence rule is well formed. If the validation succeeds, the program uses addEvent 
+ to try to insert the event into the calendar. The function has a built-in checker that makes sure the current event’s parsed in event ID is not already 
+ taken by any existing events in the calendar. If the validate and conflict checkers don’t flag anything as wrong, the event is added and the updated 
+ calendar is saved to disk using saveCalendar.
+
+Delete Event: This lets users remove events from the calendar. When selected, you’ll be prompted to give the program the ID of the event you want gone. 
+It’ll use the findEvent function to see if that event exists at all, if it is found, then the program will check if the event is recurring or not. If 
+not, it just calls deleteEvent and it’ll be removed from the calendar. Otherwise, the user will be provided with a drop down menu that asks if you’d 
+like to delete one or all instances of the event (keep in mind there is only one event that is defined as recurring or not, doesn’t duplicate the event). 
+If you choose to delete only one occurrence of it, then you’ll be prompted to provide which date you want that occurrence removed from. This will use the 
+deleteOneOccurrence function, which then adds that date to the event’s excludedDates list, which is there to prevent that occurrence from appearing in 
+future views. If you instead decide to delete all instances of an eventm the entire recurring event is removed with deleteEvent. In either case, once 
+the deletion goes through, the updated calendar is saved to disk using saveCalendar again.
+
+Update Event:  The purpose of update event is for when you want to update an event in the calendar after it has been created. The process is that when 
+you choose the option to update an event in the main menu, it will then prompt you for the ID of the event that you want to update. Now it will give 
+you the Event items along with the old instance for each item (for example the old title) and then allow you to input the new instance you want. 
+PromptKeep is used for required text fields such as the title. PromptOptionalKeep is used for optional field such as the location or notes. If you 
+just click enter it will skip changing that specific field. When the new event has been created, the real update is done by the function UpdateEvent 
+where it checks that the event ID of the new Event is the same as the one that we have selected to change. Then if UpdateEvent succeeds the calendar 
+is then saved to disk with saveCalendar. 
+
+Print Calendar: Print lets you look over ranges of time and see the events. This is where our sorting functions become useful. From the main menu when 
+you pick print you are then prompted with the option to choose a day, week, month, or year that you want to view. It will show you all of the events for 
+a week, month, or year after the date that you specify. For week it will show you the events over the next seven days. Whereas for month and year, it 
+will use the function DaysInMonth to find you all of the events in that month or year. The function occurrencesInRange takes the calendar and a start and 
+end date and collects all event occurrences in that range. It does this by calling expandEventInRange on each event in the calendar. expandEventInRange 
+checks each date in the interval and uses occursOnDate to see whether the event happens on that day. Then we use SortOn to put them in chronological order. 
+The functions that we use to print the ranges are renderDayView, renderWeekView, renderMonthView, and renderDayView
+
+Milestones completed:
+
+From our original project proposal, we completed all the easy milestones and a majority of the medium ones (some of which changed as we worked on the project), 
+being the core calendar system: custom events, calendar types, date/time interval structures, conflict detection, persistent storage and terminal based calendar 
+views. We also got the recurring event support (daily, weekly, monthly, and bounded recurrence) implemented, as well as the recurrence expansion so that repeated 
+events appear correctly in filtered views and conflict detection.
+
+We also completed the interactive menu-based UI we talked about in the progress report + filtered printing by time period or date (day, week, month, year). 
+The items we didn’t implement were better delete/search options, advanced persistence or calendar version history and the stretch being constraint based scheduling 
++ recommendations. The first three were not done due to time constraints, but the last one was not completed because we didn’t think it was practical.
+
+
+
+
